@@ -33,8 +33,8 @@ def create_table():
 
     # Step 2: Create database table with all possible fields
     fields_sql = ", ".join([f"[{field}] TEXT" for field in ris_fields])
-    extra_columns = ", source TEXT, unique_id INTEGER PRIMARY KEY AUTOINCREMENT, is_duplicate INTEGER DEFAULT 0, is_keyword_match INTEGER DEFAULT 0"
-    create_table_sql = f"CREATE TABLE IF NOT EXISTS articles ({fields_sql} {extra_columns})"
+    extra_columns = " source TEXT, unique_id INTEGER PRIMARY KEY AUTOINCREMENT, is_duplicate INTEGER DEFAULT 0, is_keyword_match INTEGER DEFAULT 0"
+    create_table_sql = f"CREATE TABLE IF NOT EXISTS articles ({fields_sql}, {extra_columns})"
     cursor.execute(create_table_sql)
 
 # Create sequence table if not exists
@@ -124,42 +124,63 @@ def filter_articles(query):
         return query
 
     def build_sql(query):
+        pattern = r"\)\s+(AND|OR)\s+\("
+        match = re.search(pattern, query)
+
+        if match:
+            main_bool_opr = f" {match.group(1)} "
+            print("Operator utama:", main_bool_opr)
+        else:
+            print("Tidak ditemukan operator utama")
+            main_bool_opr = ' AND '
         query = query.strip('[]')
         groups = re.findall(r'\((.*?)\)', query)
+        # print(f"groups {groups}")
         conditions = []
+        
         for group in groups:
             parts = group.split('||')
             title_conditions = []
             abstract_conditions = []
             keyword_conditions = []
+            bool_opr = ' AND '
             for kw in parts:
                 parse_queries = parse_query(kw.strip()).split('&&')
+                if 'OR' in kw.strip():
+                    parse_queries = parse_query(kw.strip()).split('||')
+                    bool_opr = ' OR '
+                # print(f"parse_queries {parse_queries}")
                 if len(parse_queries) > 1:
                     for kwq in parse_queries:
-                        title_conditions.append(f"title LIKE '%{kwq.strip()}%'")
-                        print(f"title_conditions {title_conditions}")
-                        print(f"parse_query {parse_query(kwq.strip())}")
-                        abstract_conditions.append(f"abstract LIKE '%{kwq.strip()}%'")
-                        keyword_conditions.append(f"keywords LIKE '%{kwq.strip()}%'")
+                        title_conditions.append(f"LOWER(title) LIKE '%{kwq.strip().lower()}%'")
+                        # print(f"LOWER(title_conditions) {title_conditions}")
+                        # print(f"parse_query {parse_query(kwq.strip().lower())}")
+                        abstract_conditions.append(f"LOWER(abstract) LIKE '%{kwq.strip().lower()}%'")
+                        keyword_conditions.append(f"LOWER(keywords) LIKE '%{kwq.strip().lower()}%'")
                 else:
-                    title_conditions.append(f"title LIKE '%{kw.strip()}%'")
-                    print(f"title_conditions {title_conditions}")
-                    print(f"parse_query {parse_query(kw.strip())}")
-                    abstract_conditions.append(f"abstract LIKE '%{kw.strip()}%'")
-                    keyword_conditions.append(f"keywords LIKE '%{kw.strip()}%'")
+                    title_conditions.append(f"LOWER(title) LIKE '%{kw.strip().lower()}%'")
+                    # print(f"title_conditions {title_conditions}")
+                    # print(f"parse_query {parse_query(kw.strip().lower())}")
+                    abstract_conditions.append(f"LOWER(abstract) LIKE '%{kw.strip().lower()}%'")
+                    keyword_conditions.append(f"LOWER(keywords) LIKE '%{kw.strip().lower()}%'")
                 
-            conditions.append(f"(({ ' AND '.join(title_conditions) }) OR ({ ' AND '.join(abstract_conditions) }) OR ({ ' AND '.join(keyword_conditions) }))")
-        return ' AND '.join(conditions)
+            conditions.append(f"(({ bool_opr.join(title_conditions) }) OR ({ bool_opr.join(abstract_conditions) }) OR ({ bool_opr.join(keyword_conditions) }))")
+        return main_bool_opr.join(conditions)
 
     sql_condition = build_sql(query)
-    sql = f"SELECT * FROM articles WHERE {sql_condition}"
+    sql = f"SELECT unique_id FROM articles WHERE {sql_condition}"
     print(f"sql {sql}")
     cursor.execute(sql)
     matches = cursor.fetchall()
-    
+    print(f"matches {matches} len {len(matches)}")
     cursor.execute("UPDATE articles SET is_keyword_match = 0")
     for match in matches:
+        print(f"unique_id {match[0]}")
         cursor.execute("UPDATE articles SET is_keyword_match = 1 WHERE unique_id = ?", (match[0],))
+    sql = f"SELECT * FROM articles WHERE is_keyword_match = 1"
+    print(f"sql matches {sql}")
+    cursor.execute(sql)
+    matches = cursor.fetchall()
     conn.commit()
     return matches
 
