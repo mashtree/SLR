@@ -79,43 +79,6 @@ def insert_data():
                         cursor.execute(sql, values)
     conn.commit()
 
-# insert_data()
-
-# Step 4: Filter relevant articles
-# def filter_articles(keywords, logical_operator='AND'):
-#     query_parts = [f"(title LIKE '%{kw}%' OR abstract LIKE '%{kw}%' OR keywords LIKE '%{kw}%')" for kw in keywords]
-#     query = f" {logical_operator} ".join(query_parts)
-#     sql = f"SELECT * FROM articles WHERE {query}"
-#     cursor.execute(sql)
-#     return cursor.fetchall()
-# def filter_articles(query):
-#     def parse_query(query):
-#         query = query.replace('_', ' ')
-#         query = re.sub(r'\bAND\b', '&&', query, flags=re.IGNORECASE)
-#         query = re.sub(r'\bOR\b', '||', query, flags=re.IGNORECASE)
-#         return query
-
-#     def build_sql(query):
-#         def handle_expression(expression):
-#             parts = expression.split('||')
-#             parts = [f"(title LIKE '%{kw.strip()}%' OR abstract LIKE '%{kw.strip()}%' OR keywords LIKE '%{kw.strip()}%')" for kw in parts]
-#             return f"({' OR '.join(parts)})"
-
-#         terms = query.split('&&')
-#         terms = [handle_expression(term.strip()) for term in terms]
-#         return ' AND '.join(terms)
-
-#     sql_query = parse_query(query)
-#     sql_condition = build_sql(sql_query)
-#     sql = f"SELECT * FROM articles WHERE {sql_condition}"
-#     cursor.execute(sql)
-#     match = cursor.fetchall()
-
-#     cursor.execute("UPDATE articles SET is_keyword_match = 0")
-#     for match in matches:
-#         cursor.execute("UPDATE articles SET is_keyword_match = 1 WHERE unique_id = ?", (match[0],))
-#     conn.commit()
-#     return matches
 def filter_articles(query):
     def parse_query(query):
         query = query.replace('_', ' ')
@@ -124,47 +87,40 @@ def filter_articles(query):
         return query
 
     def build_sql(query):
+        query = query.strip('[]').strip()
         pattern = r"\)\s+(AND|OR)\s+\("
-        match = re.search(pattern, query)
+        match = re.search(pattern, query, flags=re.IGNORECASE)
 
-        if match:
-            main_bool_opr = f" {match.group(1)} "
-            print("Operator utama:", main_bool_opr)
-        else:
-            print("Tidak ditemukan operator utama")
-            main_bool_opr = ' AND '
-        query = query.strip('[]')
+        # Detect main boolean operator between grouped expressions
+        main_bool_opr = f" {match.group(1)} " if match else " AND "
+
         groups = re.findall(r'\((.*?)\)', query)
-        # print(f"groups {groups}")
         conditions = []
         
         for group in groups:
-            parts = group.split('||')
-            title_conditions = []
-            abstract_conditions = []
-            keyword_conditions = []
-            bool_opr = ' AND '
+            parts = re.split(r'\s*\|\|\s*', group)  # Split by OR first
+            title_conditions, abstract_conditions, keyword_conditions = [], [], []
+            bool_opr = " OR "  # Default
+            
             for kw in parts:
-                parse_queries = parse_query(kw.strip()).split('&&')
-                if 'OR' in kw.strip():
-                    parse_queries = parse_query(kw.strip()).split('||')
-                    bool_opr = ' OR '
-                # print(f"parse_queries {parse_queries}")
-                if len(parse_queries) > 1:
-                    for kwq in parse_queries:
-                        title_conditions.append(f"LOWER(title) LIKE '%{kwq.strip().lower()}%'")
-                        # print(f"LOWER(title_conditions) {title_conditions}")
-                        # print(f"parse_query {parse_query(kwq.strip().lower())}")
-                        abstract_conditions.append(f"LOWER(abstract) LIKE '%{kwq.strip().lower()}%'")
-                        keyword_conditions.append(f"LOWER(keywords) LIKE '%{kwq.strip().lower()}%'")
-                else:
-                    title_conditions.append(f"LOWER(title) LIKE '%{kw.strip().lower()}%'")
-                    # print(f"title_conditions {title_conditions}")
-                    # print(f"parse_query {parse_query(kw.strip().lower())}")
-                    abstract_conditions.append(f"LOWER(abstract) LIKE '%{kw.strip().lower()}%'")
-                    keyword_conditions.append(f"LOWER(keywords) LIKE '%{kw.strip().lower()}%'")
+                kw = parse_query(kw.strip())
+                sub_parts = re.split(r'\s*&&\s*', kw)  # Split by AND second
                 
-            conditions.append(f"(({ bool_opr.join(title_conditions) }) OR ({ bool_opr.join(abstract_conditions) }) OR ({ bool_opr.join(keyword_conditions) }))")
+                if len(sub_parts) > 1:
+                    bool_opr = " AND "
+                else:
+                    sub_parts = re.split(r'\s*\|\|\s*', kw)  # Split by OR second
+                for sub_kw in sub_parts:
+                        title_conditions.append(f"LOWER(title) LIKE '%{sub_kw.lower()}%'")
+                        abstract_conditions.append(f"LOWER(abstract) LIKE '%{sub_kw.lower()}%'")
+                        keyword_conditions.append(f"LOWER(keywords) LIKE '%{sub_kw.lower()}%'")
+            
+            conditions.append(
+                f"(({bool_opr.join(title_conditions)}) OR "
+                f"({bool_opr.join(abstract_conditions)}) OR "
+                f"({bool_opr.join(keyword_conditions)}))"
+            )
+        
         return main_bool_opr.join(conditions)
 
     sql_condition = build_sql(query)
